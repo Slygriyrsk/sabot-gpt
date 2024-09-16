@@ -1,178 +1,240 @@
-//"use client" //client use krega to gsap ayega wrna black rhega kuch render hi nhi krega
-
-import { useState } from 'react'
-import './App.css'
-import axios from 'axios'
-import Loading from './Loading';
-import { FaMoon, FaSun } from 'react-icons/fa'; // icons toggle krna hia to use kra
-import { BsAndroid2 } from "react-icons/bs";
-import { useGSAP } from '@gsap/react';
-import gsap from 'gsap';
+import React, { useState, useRef, useEffect } from 'react';
+import { FaMoon, FaSun, FaPaperPlane, FaHistory, FaTrash, FaImage, FaFile } from 'react-icons/fa';
 import { RiRobot3Fill } from "react-icons/ri";
+import { gsap } from 'gsap';
+import './App.css';
 
 function App() {
-  const [ques, setQues] = useState("");
-  const [ans, setAns] = useState("");
+  const [question, setQuestion] = useState("");
+  const [chatHistory, setChatHistory] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [bgColor, setBgColor] = useState('white');
+  const [theme, setTheme] = useState('light');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [error, setError] = useState(null);
+  const chatContainerRef = useRef(null);
+  const fileInputRef = useRef(null);
 
-  useGSAP(() => {
-    gsap.fromTo(
-      '#answer',
-      {
-        opacity: 0,
-        y: 50,
-        scale: 0.8,
-        rotation: 0,
-      },
-      {
-        opacity: 1,
-        y: 0, // back to original position
-        scale: 1, // scale to normal
-        rotation: 0, // End rotated back to normal
-        duration: 1.5, // Duration of the animation
-        delay: 0.8, // Delay before the animation starts
-        ease: 'bounce.out', // Adding easing for a more dynamic feel
-        stagger: 0.2,
-        onComplete: () => {
-          console.log('Animation complete');
-        },
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatHistory]);
+
+  const toggleTheme = () => {
+    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+  };
+
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) { // 5MB limit
+        setError("File size exceeds 5MB limit.");
+        return;
       }
-    );
-  }, [ans]); // Trigger animation when `ans` changes
+      setSelectedFile(file);
+      setQuestion(prev => prev + ` [File: ${file.name}]`);
+      setError(null);
+    }
+  };
 
-  function toggleBackground() {
-    setBgColor(prevBgColor => (prevBgColor === 'white' ? 'black' : 'white'));
-  }
+  const triggerFileInput = () => {
+    fileInputRef.current.click();
+  };
 
-  //we can't stop any function in btw or get readable code
-  async function generateAnswer() {
-    //initially ans ko time lgta hai load hone me to ..loading show krde
+  const generateAnswer = async () => {
+    if (!question.trim() && !selectedFile) return;
 
-    setAns(""); //clear the prev ans
-    setLoading(true); // Set loading to true before starting the API call
-
-    const apiKey = import.meta.env.VITE_API_KEY; //since we use VITE and gemini api so import meta.env file from env
+    setLoading(true);
+    setError(null);
+    let newQuestion = { type: 'user', content: question };
 
     try {
-      //fetch bhi use kr skte hai jo ki inbuilt function hai api calls ke liye but 
-      // in axios we get the server response automatically but in fetch hme fetch.json krke data parse krna hoga into a js obj
-      const response = await axios({ // we use await because we are fething apikeys which will take time to respond
-        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
-        method: 'post',
-        data: {
-          "contents": [
-            {
-              "parts": [
-                {
-                  "text":
-                    ques
-                }
-              ]
-            }
-          ]
-        }
-      });
-      //now this is json response so we will have to go to each element to get the req ans
-      // console.log(response['data']['candidates'][0]['content']['parts'][0]['text']);
-      //instead of response in console we will be doing in frontend page
-      setAns(response['data']['candidates'][0]['content']['parts'][0]['text']);
+      if (selectedFile) {
+        const base64File = await fileToBase64(selectedFile);
+        newQuestion.file = {
+          name: selectedFile.name,
+          type: selectedFile.type,
+          content: base64File
+        };
+      }
+      await processQuestion(newQuestion);
     } catch (error) {
-      console.error("Error fetching data: ", error);
-      setAns("An error occurred while generating the answer.");
+      console.error("Error processing file:", error);
+      setError("Error processing file. Please try again.");
     } finally {
-      setLoading(false); // Ensure loading is set to false after the API call completes hide krne hoga na
+      setLoading(false);
     }
-  }
+  };
+
+  const fileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  const processQuestion = async (newQuestion) => {
+    setChatHistory(prev => [...prev, newQuestion]);
+    setQuestion("");
+    setSelectedFile(null);
+
+    try {
+      const apiKey = import.meta.env.VITE_API_KEY;
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{ 
+            parts: [
+              { text: newQuestion.content },
+              newQuestion.file ? { inline_data: { mime_type: newQuestion.file.type, data: newQuestion.file.content } } : null
+            ].filter(Boolean)
+          }]
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status} ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      if (!data.candidates || data.candidates.length === 0) {
+        throw new Error('No response from the API');
+      }
+      const aiResponse = { type: 'ai', content: data.candidates[0].content.parts[0].text };
+      setChatHistory(prev => [...prev, aiResponse]);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+      setError(`Error: ${error.message}`);
+      const errorResponse = { type: 'ai', content: "An error occurred while generating the answer." };
+      setChatHistory(prev => [...prev, errorResponse]);
+    }
+  };
+
+  const deleteHistoryItem = (index) => {
+    const itemToDelete = document.querySelector(`.history-item:nth-child(${index + 1})`);
+    
+    gsap.to(itemToDelete, {
+      opacity: 0,
+      x: -50,
+      duration: 0.3,
+      onComplete: () => {
+        setChatHistory(prev => {
+          const newHistory = [...prev];
+          newHistory.splice(index * 2, 2);
+          return newHistory;
+        });
+      }
+    });
+  };
 
   return (
-    <div
-      style={{
-        backgroundColor: bgColor,
-        color: bgColor === 'white' ? 'black' : 'white',
-      }}
-      className="d-flex flex-column align-items-center min-vh-100"
-    >
-      <div className="w-100 p-3 p-md-4">
-        <button
-          className="btn btn-secondary mb-4 position-fixed top-0 end-0 m-3"
-          onClick={toggleBackground}
-        >
-          {bgColor === 'white' ? <FaMoon size={24} /> : <FaSun size={24} />}
+    <div className={`app ${theme}`}>
+      <header className="header">
+        <div className="logo">
+          <RiRobot3Fill size={32} />
+          <h1>SABOT AI</h1>
+        </div>
+        <button className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
+          {theme === 'light' ? <FaMoon /> : <FaSun />}
         </button>
-        <RiRobot3Fill
-          style={{
-            width: "40px",
-            height: "40px",
-            opacity: '0.6',
-            color: 'blue',
-          }}
-        />
-        <h1 id='sabot' className="text-center text-primary mb-4">SABOT AI</h1>
-        <div className="mb-4 w-100 px-3">
-          {/* You can choose between a textarea or input based on your preference
-      <textarea 
-        className="form-control overflow-hidden text-decoration none"
-        value={ques}
-        onChange={(e) => setQues(e.target.value)} // now when we write something it get's stored onChange
-        cols="30"
-        rows="1"
-        placeholder='Ask Anything'
-      ></textarea> */}
-          <form>
-            <input
-              value={ques}
-              onChange={(e) => setQues(e.target.value)}
-              type="text"
-              className="form-control form-control-lg shadow-sm mb-3"
-              placeholder="Ask Anything"
-              style={{ opacity: 1, backgroundColor: 'white' }}
-            />
-          </form>
-          <button
-            className="btn btn-primary btn-lg w-100 shadow-sm"
-            onClick={generateAnswer}
-          >
-            Generate Answer
-          </button>
-        </div>
-        <div
-          className="p-3 rounded shadow-sm"
-          style={{
-            minHeight: '200px',
-            backgroundColor: bgColor === '#333' ? '#444' : '#f8f9fa',
-          }}
-        >
-          {loading ? (
-            <Loading />
-          ) : (
-            //used pre here for proper ans line by line to avoid mesh
-            <pre
-              id="answer"
-              className="answer m-0"
-              style={{ color: bgColor === '#333' ? 'white' : 'black' }}
+      </header>
+
+      <main className="main-content">
+        <section className="chat-section">
+          <div ref={chatContainerRef} className="chat-container">
+            {chatHistory.map((message, index) => (
+              <div key={index} className={`message ${message.type}-message`}>
+                {message.content}
+                {message.file && (
+                  <div className="file-attachment">
+                    <FaFile /> {message.file.name}
+                  </div>
+                )}
+              </div>
+            ))}
+            {loading && (
+              <div className="loading-spinner">
+                <div className="spinner"></div>
+              </div>
+            )}
+            {error && (
+              <div className="error-message" role="alert">
+                {error}
+              </div>
+            )}
+          </div>
+          <form onSubmit={(e) => { e.preventDefault(); generateAnswer(); }} className="input-form">
+            <div className="input-wrapper">
+              <input
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                className="input-field"
+                placeholder="Ask anything..."
+                aria-label="Ask a question"
+              />
+              <button
+                type="button"
+                onClick={triggerFileInput}
+                className="file-button"
+                aria-label="Attach file"
+              >
+                <FaImage />
+              </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                accept="image/*,.pdf,.doc,.docx,.txt"
+              />
+            </div>
+            <button
+              type="submit"
+              className="submit-button"
+              disabled={loading}
+              aria-label="Submit question"
             >
-              {ans}
-            </pre>
-          )}
-        </div>
-      </div>
-      <small className="form-text text-muted">
-        Inspired by Mahesh Dalla <BsAndroid2 className='d-inline-flex align-items-center' />
-      </small>
-      <div
-        className='position-relative text-center p-3 w-100 rounded border border-white'
-        style={{
-          backgroundColor: bgColor === 'black' ? 'rgba(0, 0, 0, 0)' : 'rgba(0, 0, 0, 0.5)',
-        }}
-      >
-        &copy; {new Date().getFullYear()} Copyright{' '}
-        <a className='text-white text-decoration-none'>
-          SABOT AI
-        </a>
-      </div>
+              <FaPaperPlane />
+            </button>
+          </form>
+        </section>
+
+        <aside className="history-section">
+          <h2 className="history-title">
+            <FaHistory /> Chat History
+          </h2>
+          <ul className="history-list">
+            {chatHistory.filter(msg => msg.type === 'user').map((chat, index) => (
+              <li key={index} className="history-item">
+                {chat.content}
+                {chat.file && (
+                  <span className="file-indicator">
+                    <FaFile /> {chat.file.name}
+                  </span>
+                )}
+                <button 
+                  className="delete-button" 
+                  onClick={() => deleteHistoryItem(index)}
+                  aria-label="Delete chat history item"
+                >
+                  <FaTrash />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      </main>
+
+      <footer className="footer">
+        <p>&copy; {new Date().getFullYear()} SABOT AI. All rights reserved.</p>
+      </footer>
     </div>
-  )
+  );
 }
 
-export default App
+export default App;

@@ -25,6 +25,7 @@
     "bootstrap": "^5.3.3",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "framer-motion": "^11.5.4",
     "gsap": "^3.12.5",
     "jsonwebtoken": "^9.0.2",
     "mdb-react-ui-kit": "^8.0.0",
